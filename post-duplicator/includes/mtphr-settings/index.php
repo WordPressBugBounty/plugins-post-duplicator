@@ -1,9 +1,4 @@
 <?php
-/**
- * Version: 1.0.0
- */
-
-// Update the namespace after every update!!!
 namespace Mtphr\PostDuplicator;
 
 /**
@@ -13,10 +8,13 @@ final class Settings {
 
   private static $instance;
 
-  private $id = 'mtphr';
+  private $version = '1.1.4';
+  private $id = '';
   private $textdomain = 'mtphr-settings';
   private $settings_dir = '';
   private $settings_url = '';
+  private $settings_ready = false;
+  private $fields_ready = false;
 
   private $admin_pages = [];
   private $options = [];
@@ -28,7 +26,11 @@ final class Settings {
   private $encryption_settings = [];
   private $type_settings = [];
   private $noupdate_settings = [];
-  private $default_sanitizer = 'sanitize_text_field';
+  private $admin_notices = [];
+  private $sidebar_items = [];
+  private $sidebar_width = '320px';
+  private $main_content_max_width = '1000px';
+  private $default_sanitizer = 'wp_kses_post';
   private $encryption_key_1 = '7Q@_DvLVTiHPEA';
   private $encryption_key_2 = 'YgM2iCX-BtoBpJ';
 
@@ -38,9 +40,26 @@ final class Settings {
   public static function instance() {
     if ( ! isset( self::$instance ) && ! ( self::$instance instanceof Settings ) ) {	
 			self::$instance = new Settings;
+      
+      // Initialize the ID based on namespace
+      if ( empty( self::$instance->id ) ) {
+        self::$instance->id = self::$instance->get_namespace_identifier();
+      }
+      
+      // Register WordPress hooks for admin functionality
       add_action( 'admin_menu', array( self::$instance, 'create_admin_pages' ) );
       add_action( 'admin_enqueue_scripts', array( self::$instance, 'enqueue_scripts' ) );
       add_action( 'rest_api_init', array( self::$instance, 'register_routes' ) );
+      add_action( 'admin_notices', array( self::$instance, 'admin_notices' ) );
+
+      // Register initialization hooks - fires namespace-specific action hooks
+      add_action( 'rest_api_init', array( self::$instance, 'initialize_settings' ), 20 );
+      add_action( 'init', array( self::$instance, 'initialize_settings' ), 20 );
+      add_action( 'init', array( self::$instance, 'initialize_fields' ), 20 );
+
+      list( $path, $url ) = self::$instance->get_path( dirname( __FILE__ ) );
+      self::$instance->settings_dir = $path;
+      self::$instance->settings_url = $url;
     }
     return self::$instance;
   }
@@ -59,37 +78,86 @@ final class Settings {
 		_doing_it_wrong( __FUNCTION__, __( 'Cheatin&#8217; huh?', self::$instance->textdomain ), '1.0.0' );
 	}
 
-  /**
-   * Set a custom id for the settings
-   */
-  public function init( $args = [] ) {
-    if ( isset( $args['id'] ) ) {
-      self::$instance->id = esc_attr( str_replace( [' ', '-'], '', $args['id'] ) );
-    }
-    if ( isset( $args['textdomain'] ) ) {
-      self::$instance->textdomain = esc_attr( $args['textdomain'] );
-    }
-    if ( isset( $args['settings_dir'] ) ) {
-      self::$instance->settings_dir = esc_attr( trailingslashit( $args['settings_dir'] ) );
-    }
-    if ( isset( $args['settings_url'] ) ) {
-      self::$instance->settings_url = esc_url( trailingslashit( $args['settings_url'] ) );
-    }
-  }
+  private function get_path( $path = '' ) {
+		// Plugin base path.
+		$path       = wp_normalize_path( untrailingslashit( $path ) );
+		$themes_dir = wp_normalize_path( untrailingslashit( dirname( get_stylesheet_directory() ) ) );
+
+		// Default URL.
+		$url = plugins_url( '', $path . '/' . basename( $path ) . '.php' );
+
+		// Included into themes.
+		if (
+			0 !== strpos( $path, wp_normalize_path( WP_PLUGIN_DIR ) )
+			&& 0 !== strpos( $path, wp_normalize_path( WPMU_PLUGIN_DIR ) )
+			&& 0 === strpos( $path, $themes_dir )
+		) {
+			$themes_url = untrailingslashit( dirname( get_stylesheet_directory_uri() ) );
+			$url        = str_replace( $themes_dir, $themes_url, $path );
+		}
+
+		$path = trailingslashit( $path );
+		$url  = trailingslashit( $url );
+
+		return array( $path, $url );
+	}
 
   /**
    * Init settings
    */
-  public function init_settings( $option, $settings ) {
-    if ( ! is_array( $settings ) ) {
-      return false;
-    }
-    if ( is_array( $settings ) && ! empty( $settings ) ) {
-      foreach ( $settings as $setting ) {
-        $setting['option'] = $option;
-        self::$instance->process_setting_data( $setting );
-      }
-    }
+  // public function init_settings( $option, $settings ) {
+  //   if ( ! is_array( $settings ) ) {
+  //     return false;
+  //   }
+  //   if ( is_array( $settings ) && ! empty( $settings ) ) {
+  //     foreach ( $settings as $setting ) {
+  //       $setting['option'] = $option;
+  //       self::$instance->process_setting_data( $setting );
+  //     }
+  //   }
+  // }
+
+  /**
+   * Set the settings ready
+   */
+  public function set_settings_ready( $ready ) {
+    return self::$instance->settings_ready = boolval( $ready );
+  }
+
+  /**
+   * Get the settings ready
+   */
+  public function get_settings_ready() {
+    return self::$instance->settings_ready;
+  }
+
+  /**
+   * Set the fields ready
+   */
+  public function set_fields_ready( $ready ) {
+    return self::$instance->fields_ready = boolval( $ready );
+  }
+
+  /**
+   * Get the fields ready
+   */
+  public function get_fields_ready() {
+    return self::$instance->fields_ready;
+  }
+
+  /**
+   * Get namespace identifier from the class namespace
+   */
+  private function get_namespace_identifier() {
+    $reflection = new \ReflectionClass( $this );
+    $namespace = $reflection->getNamespaceName();
+    
+    // Convert namespace to identifier by removing backslashes
+    // e.g., "Mtphr\PostDuplicator" -> "MtphrPostDuplicator"
+    $identifier = str_replace( '\\', '', $namespace );
+    
+    // Fallback to 'mtphr' if namespace is empty (shouldn't happen, but safety check)
+    return ! empty( $identifier ) ? $identifier : 'mtphr';
   }
 
   /**
@@ -262,25 +330,41 @@ final class Settings {
     if ( ! isset( $section['id'] ) || ! isset( $section['slug'] ) || ! isset( $section['menu_slug'] ) ) {
       return false;
     }
+
+    // Check if a section with the same ID already exists
+    $ids = array_column( $sections, 'id' ); // Extract all existing IDs
+    if ( in_array( $section['id'], $ids ) ) {
+      $message = "<p><strong>{$section['id']}</strong> can not be added for <strong>{$section['menu_slug']}</strong>. This section id is already being used with mtphr-settings.</p>";
+      self::$instance->add_admin_notice( 'error', $message );
+      return false;
+    }
+
     if ( ! isset( $section['label'] ) ) {
       $section['label'] = ucfirst( $section['id'] );
     }
     if ( ! isset( $section['order'] ) ) {
       $section['order'] = $order;
     }
+    if ( ! isset( $section['type'] ) ) {
+      $section['type'] = 'primary';
+    }
 
     // Check if top level and slug already exists
-    if ( ! isset( $sections['parent_slug'] ) ) {
-      if ( in_array( $section['menu_slug'], array_column( array_filter( $sections, fn( $s ) => ! isset( $s['parent_slug'] ) ), 'menu_slug' ) ) ) {
+    if ( ! isset( $section['parent_slug'] ) ) {
+      $exists = array_filter( $sections, function ( $s ) use ( $section ) {
+        return $s['menu_slug'] === $section['menu_slug'] 
+          && $s['id'] === $section['id'];
+      } );
+      if ( ! empty( $exists ) ) {
         return false;
       }
 
     // Check if submenu and same slug exists with same parent
     } else {
       $exists = array_filter( $sections, function ( $s ) use ( $section ) {
-        return isset( $s['parent_slug'] ) 
-          && $s['parent_slug'] === $section['parent_slug'] 
-          && $s['menu_slug'] === $section['menu_slug'];
+        return isset( $s['parent_slug'] ) && $s['parent_slug'] === $section['parent_slug']
+          && $s['menu_slug'] === $section['menu_slug']
+          && $s['id'] === $section['id'];
       } );
       if ( ! empty( $exists ) ) {
         return false;
@@ -371,6 +455,11 @@ final class Settings {
 
     if ( ! isset( $setting['option'] ) ) {
       $section = self::$instance->get_section( $setting['section'] );
+      if ( ! $section ) {
+        $message = "<p>Section <strong>{$setting['section']}</strong> does not exist.</p>";
+        self::$instance->add_admin_notice( 'error', $message );
+        return false;
+      }
       $setting['option'] = $section['option'];
     }
     
@@ -415,6 +504,54 @@ final class Settings {
     }
     
     return $updated_settings;
+  }
+
+  /**
+   * Add sidebar
+   */
+  public function add_sidebar( $data ) {
+    if ( ! is_array( $data ) ) {
+      return false;
+    }
+    if ( ! isset( $data['items'] ) || ! is_array( $data['items'] ) ) {
+      return false;
+    }
+
+    // Store sidebar items
+    self::$instance->sidebar_items = $data['items'];
+
+    // Store sidebar width if provided
+    if ( isset( $data['width'] ) && ! empty( $data['width'] ) ) {
+      self::$instance->sidebar_width = esc_attr( $data['width'] );
+    }
+
+    // Store main content max-width if provided
+    if ( isset( $data['main_max_width'] ) && ! empty( $data['main_max_width'] ) ) {
+      self::$instance->main_content_max_width = esc_attr( $data['main_max_width'] );
+    }
+
+    return true;
+  }
+
+  /**
+   * Get sidebar items
+   */
+  public function get_sidebar_items() {
+    return self::$instance->sidebar_items;
+  }
+
+  /**
+   * Get sidebar width
+   */
+  public function get_sidebar_width() {
+    return self::$instance->sidebar_width;
+  }
+
+  /**
+   * Get main content max-width
+   */
+  public function get_main_content_max_width() {
+    return self::$instance->main_content_max_width;
   }
 
   /**
@@ -565,6 +702,27 @@ final class Settings {
   }
 
   /**
+   * Get default values
+   */
+  public function get_default_values( $options = false ) {
+    $default_values = self::$instance->default_values;
+    if ( $options ) {
+      if ( is_array( $options ) ) {
+        if ( ! empty( $options ) ) {
+          $values = [];
+          foreach ( $options as $option ) {
+            $values[$option] = isset( $default_values[$option] ) ? $default_values[$option] : [];
+          }
+          return $values;
+        }
+      } else {
+        return isset( $default_values[$options] ) ? $default_values[$options] : [];
+      }
+    }
+    return $default_values;
+  }
+
+  /**
    * Add sanitize settings
    */
   public function add_sanitize_settings( $option, $values = [] ) {
@@ -577,7 +735,27 @@ final class Settings {
     }
     $sanitize_settings[$option] = $sanitize_option_settings;
     self::$instance->sanitize_settings = $sanitize_settings;
+    return $sanitize_settings;
+  }
 
+  /**
+   * Get sanitize settings
+   */
+  public function get_sanitize_settings( $options = false ) {
+    $sanitize_settings = self::$instance->sanitize_settings;
+    if ( $options ) {
+      if ( is_array( $options ) ) {
+        if ( ! empty( $options ) ) {
+          $settings = [];
+          foreach ( $options as $option ) {
+            $settings[$option] = isset( $sanitize_settings[$option] ) ? $sanitize_settings[$option] : [];
+          }
+          return $settings;
+        }
+      } else {
+        return isset( $sanitize_settings[$options] ) ? $sanitize_settings[$options] : [];
+      }
+    }
     return $sanitize_settings;
   }
 
@@ -604,50 +782,7 @@ final class Settings {
     }
     $encryption_settings[$option] = $encryption_option_settings;
     self::$instance->encryption_settings = $encryption_settings;
-
     return $encryption_settings;
-  }
-
-  /**
-   * Get default values
-   */
-  public function get_default_values( $options = false ) {
-    $default_values = self::$instance->default_values;
-    if ( $options ) {
-      if ( is_array( $options ) ) {
-        if ( ! empty( $options ) ) {
-          $values = [];
-          foreach ( $options as $option ) {
-            $values[$option] = isset( $default_values[$option] ) ? $default_values[$option] : [];
-          }
-          return $values;
-        }
-      } else {
-        return isset( $default_values[$options] ) ? $default_values[$options] : [];
-      }
-    }
-    return $default_values;
-  }
-
-  /**
-   * Get sanitize settings
-   */
-  public function get_sanitize_settings( $options = false ) {
-    $sanitize_settings = self::$instance->sanitize_settings;
-    if ( $options ) {
-      if ( is_array( $options ) ) {
-        if ( ! empty( $options ) ) {
-          $settings = [];
-          foreach ( $options as $option ) {
-            $settings[$option] = isset( $sanitize_settings[$option] ) ? $sanitize_settings[$option] : [];
-          }
-          return $settings;
-        }
-      } else {
-        return isset( $sanitize_settings[$options] ) ? $sanitize_settings[$options] : [];
-      }
-    }
-    return $sanitize_settings;
   }
 
   /**
@@ -747,6 +882,7 @@ final class Settings {
     }
     
     // If the option values have been compiled, return them
+    $cache = false;
     if ( isset( self::$instance->values[$option] ) && $cache ) {
       return self::$instance->values[$option];
     }
@@ -823,9 +959,9 @@ final class Settings {
             $admin_page['menu_title'],
             $admin_page['capability'],
             $admin_page['menu_slug'],
-            function () {
+            function () use ( $admin_page ) {
               echo '<div class="wrap">';
-                echo '<div id="mtphr-settings-app" namespace="' . self::$instance->get_id() . '">Test Page</div>'; // React App will be injected here
+                echo '<div id="mtphr-settings-app" data-id="' . self::$instance->get_id() . '" data-title="' . esc_attr( $admin_page['page_title'] ) . '"></div>'; // React App will be injected here
               echo '</div>';
             },
             isset( $admin_page['icon'] ) ? $admin_page['icon'] : null,
@@ -855,6 +991,22 @@ final class Settings {
     $settings = self::$instance->get_settings( $sections );
     $options = self::$instance->get_option_keys( $sections );
     $values = self::$instance->get_values( $options );
+    
+    // Get header metadata (icon, description, version) from admin page
+    // Only escape URL if it's actually a URL (starts with http:// or https://)
+    // Otherwise, pass it as-is for dashicons or WordPress icon names
+    $header_icon_raw = isset( $admin_page['header_icon'] ) ? $admin_page['header_icon'] : '';
+    $header_icon = '';
+    if ( $header_icon_raw ) {
+      if ( strpos( $header_icon_raw, 'http://' ) === 0 || strpos( $header_icon_raw, 'https://' ) === 0 ) {
+        $header_icon = esc_url( $header_icon_raw );
+      } else {
+        // For dashicons or WordPress icon names, pass as-is (but sanitize)
+        $header_icon = sanitize_text_field( $header_icon_raw );
+      }
+    }
+    $header_description = isset( $admin_page['header_description'] ) ? $admin_page['header_description'] : '';
+    $header_version = isset( $admin_page['header_version'] ) ? esc_html( $admin_page['header_version'] ) : '';
 
     // Load the Component Registry first
     $asset_file = include( self::$instance->settings_dir . 'assets/build/mtphrSettingsRegistry.asset.php' );
@@ -862,33 +1014,40 @@ final class Settings {
       self::$instance->get_id() . 'Registry',
       self::$instance->settings_url . 'assets/build/mtphrSettingsRegistry.js',
       $asset_file['dependencies'],
-      $asset_file['version'],
+      filemtime( self::$instance->settings_dir . 'assets/build/mtphrSettingsRegistry.js' ),
       true
     );
 
     // Add a hook for other scripts to register custom fields
-    do_action( 'mtphrSettings/enqueueFields', self::$instance->get_id() . 'Registry' );
+    do_action( self::$instance->get_id() . '/enqueue_fields', self::$instance->get_id() . 'Registry' );
 
     $asset_file = include( self::$instance->settings_dir . 'assets/build/mtphrSettings.asset.php' );
     wp_enqueue_style(
       self::$instance->get_id(),
       self::$instance->settings_url . 'assets/build/mtphrSettings.css',
       ['wp-components'],
-      $asset_file['version']
+      filemtime( self::$instance->settings_dir . 'assets/build/mtphrSettings.css' ),
     );
     wp_enqueue_script(
       self::$instance->get_id(),
       self::$instance->settings_url . 'assets/build/mtphrSettings.js',
       array_unique( array_merge( $asset_file['dependencies'], ['wp-element', 'wp-data', 'wp-components', 'wp-notices'] ) ),
-      $asset_file['version'],
+      filemtime( self::$instance->settings_dir . 'assets/build/mtphrSettings.js' ),
       true
     ); 
-    wp_add_inline_script( self::$instance->get_id(), self::$instance->get_id() . 'Vars = ' . json_encode( array(
+
+    wp_add_inline_script( self::$instance->get_id(), self::$instance->get_id() . 'Vars = ' . wp_json_encode( array(
       'siteUrl'        => site_url(),
       'restUrl'        => esc_url_raw( rest_url( self::$instance->get_id() . '\/v1/' ) ),
       'values'         => $values,
       'fields'         => $settings,
       'field_sections' => $sections,
+      'sidebar_items'  => self::$instance->get_sidebar_items(),
+      'sidebar_width'  => self::$instance->get_sidebar_width(),
+      'main_max_width' => self::$instance->get_main_content_max_width(),
+      'header_icon'    => $header_icon,
+      'header_description' => $header_description,
+      'header_version' => $header_version,
       'nonce'          => wp_create_nonce( 'wp_rest' )
     ) ), 'before' ) . ';';
   }
@@ -1029,7 +1188,7 @@ final class Settings {
     }
 
     return $existing_values;
-}
+  }
 
 
   /**
@@ -1082,7 +1241,12 @@ final class Settings {
     $sanitized_value = [];
     if ( is_array( $value ) && ! empty( $value ) ) {
       foreach ( $value as $key => $val ) {
-        $sanitized_value[$key] = $sanitizer( $val );
+        // If the value is an array, recursively sanitize it
+        if ( is_array( $val ) ) {
+          $sanitized_value[$key] = $this->loop_sanitize_value( $val, $sanitizer );
+        } else {
+          $sanitized_value[$key] = $sanitizer( $val );
+        }
       }
     }
     return $sanitized_value;
@@ -1154,6 +1318,10 @@ final class Settings {
    * Encrypt data
   */
   private function encrypt( $string = '', $custom_key_1 = null, $custom_key_2 = null ) {
+    if ( ! $string || '' === $string ) {
+      return $string;
+    }
+
     // Convert arrays to JSON so we can encrypt them as strings.
     if ( is_array( $string ) ) {
       $string = json_encode( $string );
@@ -1211,7 +1379,7 @@ final class Settings {
    */
   private function decrypt( $string, $custom_key_1 = null, $custom_key_2 = null ) {
     // If already an array, it might have been double-processed or not encrypted at all
-    if ( is_array( $string ) ) {
+    if ( is_array( $string ) || '' === $string ) {
       return $string;
     }
 
@@ -1233,5 +1401,138 @@ final class Settings {
     // Attempt to JSON-decode the result to restore arrays if originally encrypted from an array
     $decoded = json_decode( $output, true );
     return (json_last_error() === JSON_ERROR_NONE) ? $decoded : $output;
+  }
+
+  private function get_admin_notices() {
+    $admin_notices = self::$instance->admin_notices;
+    if ( ! is_array( $admin_notices ) ) {
+      return [];
+    }
+    return $admin_notices;
+  }
+
+  private function add_admin_notice( $type, $message ) {
+    $admin_notices = self::$instance->get_admin_notices();
+    $admin_notices[] = [
+      'type' => $type,
+      'message' => $message,
+    ];
+    self::$instance->admin_notices = $admin_notices;
+  }
+
+  /**
+   * Display admin notices
+   */
+  public function admin_notices() {
+    $admin_notices = self::$instance->get_admin_notices();
+    if ( is_array( $admin_notices ) && ! empty( $admin_notices ) ) {
+      foreach ( $admin_notices as $notice ) {
+        echo '<div class="' . $notice['type'] . '">';
+          echo wp_kses_post( $notice['message'] );
+        echo '</div>';
+      }
+    }
+  }
+
+  /**
+   * Initialize settings - fires the init_settings action hook
+   */
+  public function initialize_settings() {
+    if ( ! $this->settings_ready ) {
+      do_action( $this->get_id() . '/init_settings' );
+      $this->settings_ready = true;
+    }
+  }
+
+  /**
+   * Initialize fields - fires the init_fields action hook
+   */
+  public function initialize_fields() {
+    if ( ! $this->fields_ready ) {
+      do_action( $this->get_id() . '/init_fields' );
+      $this->fields_ready = true;
+    }
+  }
+
+  /*--------------------------------------------------------------------------
+   * Static API Methods
+   * These provide a cleaner interface: Settings::add_admin_page($data)
+   *------------------------------------------------------------------------*/
+
+  /**
+   * Static: Add an admin page
+   */
+  public static function admin_page( $data ) {
+    return self::instance()->add_admin_page( $data );
+  }
+
+  /**
+   * Static: Add a section
+   */
+  public static function section( $data ) {
+    return self::instance()->add_section( $data );
+  }
+
+  /**
+   * Static: Add fields
+   */
+  public static function fields( $data ) {
+    return self::instance()->add_fields( $data );
+  }
+
+  /**
+   * Static: Add sidebar
+   */
+  public static function sidebar( $data ) {
+    return self::instance()->add_sidebar( $data );
+  }
+
+  /**
+   * Static: Add default values
+   */
+  public static function default_values( $option, $values = [] ) {
+    return self::instance()->add_default_values( $option, $values );
+  }
+
+  /**
+   * Static: Add sanitize settings
+   */
+  public static function sanitize_settings( $option, $values = [] ) {
+    return self::instance()->add_sanitize_settings( $option, $values );
+  }
+
+  /**
+   * Static: Add encryption settings
+   */
+  public static function encryption_settings( $option, $values = [] ) {
+    return self::instance()->add_encryption_settings( $option, $values );
+  }
+
+  /**
+   * Static: Get an option value
+   */
+  public static function get_value( $option, $key = false ) {
+    $values = self::instance()->get_option_values( $option );
+    if ( $key ) {
+      if ( isset( $values[$key] ) ) {
+        return $values[$key];
+      }
+      return null;
+    }
+    return $values;
+  }
+
+  /**
+   * Static: Set an option value
+   */
+  public static function set_value( $option, $key, $value = false ) {
+    if ( is_array( $key ) ) {
+      $updated_values = $key;
+    } else {
+      $updated_values = [
+        $key => $value,
+      ];
+    }
+    return self::instance()->update_values( $option, $updated_values );
   }
 }
