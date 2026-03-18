@@ -3,8 +3,8 @@ Contributors: metaphorcreations
 Tags: posts, post, duplicate, duplication
 Requires at least: 6.6
 Requires PHP: 7.4
-Tested up to: 6.9.1
-Stable tag: 3.0.11
+Tested up to: 6.9.4
+Stable tag: 3.0.12
 License: GPL2
 
 Creates functionality to duplicate any and all post types, including taxonomies & custom fields. Perfect for developers and content creators.
@@ -296,6 +296,10 @@ The settings page includes four tabs:
 * **Permissions**: Control who can duplicate posts
 * **Advanced**: Settings for duplicating special post statuses
 
+= Where do I report security bugs found in this plugin? =
+
+Please report any security bugs found in the source code of this project through the [Patchstack Vulnerability Disclosure  Program](https://patchstack.com/database/vdp/e70e28e9-1470-4c6a-b52d-e05fbd68a516). The Patchstack team will assist you with verification, CVE assignment, and notify the developers of this plugin.
+
 == Screenshots ==
 
 1. Single post duplicate button
@@ -309,6 +313,11 @@ The settings page includes four tabs:
 9. Advanced settings
 
 == Changelog ==
+
+= 3.0.12 [2026-03-18] =
+* Security fix: restrict `future` and `private` statuses for users without `publish_posts` capability
+* Security fix: enforce post type duplication restrictions in the REST API permission callback
+* Security fix: prevent contributors from attributing duplicated posts to other users without `edit_others_posts` capability
 
 = 3.0.11 [2026-03-06] =
 * Security hardening for serialized custom meta handling in REST responses
@@ -564,4 +573,4 @@ Must upgrade in order for the plugin to work. The file paths where initially wro
 
 == Upgrade Notice ==
 
-Adds Divi theme compatibility for duplicating Divi Library Layouts.
+Security fixes
