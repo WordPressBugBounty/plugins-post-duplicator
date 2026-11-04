@@ -612,28 +612,55 @@ function get_active_capabilities( $role = false) {
 }
 
 /**
- * Update a role capability
+ * Update a role capability.
+ *
+ * Only the capabilities defined by this feature may be added or removed.
+ * Any other submitted string is ignored.
  */
 function update_capabilities( $value, $key, $option, $type ) {
-  if ( 'update' == $type ) {
-    $role = get_role( $key );
-    $active_capabilities = get_active_capabilities( $role );
-    $capability_value = is_array( $value ) ? $value : [];
-    $added_capabilities = array_diff( $capability_value, $active_capabilities );
-    $removed_capabilities = array_diff( $active_capabilities, $capability_value );
+  $allowed_capabilities = array_values( get_capabilities() );
+  $submitted_capabilities = [];
 
-    if ( is_array( $added_capabilities ) && count( $added_capabilities ) > 0 ) {
-      foreach ( $added_capabilities as $added_capability ) {
-        $role->add_cap( esc_attr( $added_capability ) );
-      }
-    }
-    if ( is_array( $removed_capabilities ) && count( $removed_capabilities ) > 0 ) {
-      foreach ( $removed_capabilities as $removed_capability ) {
-        $role->remove_cap( esc_attr( $removed_capability ) );
+  if ( is_array( $value ) ) {
+    foreach ( $value as $capability ) {
+      if ( is_string( $capability ) && in_array( $capability, $allowed_capabilities, true ) ) {
+        $submitted_capabilities[] = $capability;
       }
     }
   }
-  return $value;
+
+  $submitted_capabilities = array_values( array_unique( $submitted_capabilities ) );
+
+  if ( 'update' !== $type ) {
+    return $submitted_capabilities;
+  }
+
+  $role = get_role( $key );
+  if ( ! $role instanceof \WP_Role ) {
+    return $submitted_capabilities;
+  }
+
+  $active_capabilities = get_active_capabilities( $role );
+  if ( ! is_array( $active_capabilities ) ) {
+    $active_capabilities = [];
+  }
+
+  $added_capabilities   = array_diff( $submitted_capabilities, $active_capabilities );
+  $removed_capabilities = array_diff( $active_capabilities, $submitted_capabilities );
+
+  foreach ( $added_capabilities as $added_capability ) {
+    if ( in_array( $added_capability, $allowed_capabilities, true ) ) {
+      $role->add_cap( $added_capability );
+    }
+  }
+
+  foreach ( $removed_capabilities as $removed_capability ) {
+    if ( in_array( $removed_capability, $allowed_capabilities, true ) ) {
+      $role->remove_cap( $removed_capability );
+    }
+  }
+
+  return $submitted_capabilities;
 }
 
 /**

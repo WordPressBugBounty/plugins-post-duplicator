@@ -809,13 +809,25 @@ function perform_duplication( $orig, $settings ) {
 		$duplicate['post_author'] = get_current_user_id();
 	}
 
-	// Sanitize post content
-	add_filter( 'wp_kses_allowed_html', __NAMESPACE__ . '\additional_kses', 10, 2 );
-	$duplicate['post_content'] = wp_slash( wp_kses_post( $duplicate['post_content'] ) );
-	remove_filter( 'wp_kses_allowed_html', __NAMESPACE__ . '\additional_kses', 10, 2 );
+	// Users who can save unfiltered HTML already stored this content. Running it
+	// through KSES again drops inline styles WordPress itself kept, including
+	// transparent rgba() highlight backgrounds on <mark>.
+	$kses_post_content = ! current_user_can( 'unfiltered_html' );
+	if ( $kses_post_content ) {
+		add_filter( 'safecss_filter_attr_allow_css', __NAMESPACE__ . '\allow_safe_inline_color_css', 10, 2 );
+		add_filter( 'wp_kses_allowed_html', __NAMESPACE__ . '\additional_kses', 10, 2 );
+		$duplicate['post_content'] = wp_kses_post( $duplicate['post_content'] );
+		remove_filter( 'wp_kses_allowed_html', __NAMESPACE__ . '\additional_kses', 10, 2 );
+	}
+	$duplicate['post_content'] = wp_slash( $duplicate['post_content'] );
 
-	// Insert the post into the database
+	// Insert the post into the database. Keep the color filter active so
+	// content_save_pre does not strip the same styles for users without unfiltered_html.
 	$duplicate_id = wp_insert_post( $duplicate );
+
+	if ( $kses_post_content ) {
+		remove_filter( 'safecss_filter_attr_allow_css', __NAMESPACE__ . '\allow_safe_inline_color_css', 10, 2 );
+	}
 
 	if ( is_wp_error( $duplicate_id ) || ! $duplicate_id ) {
 		return new \WP_Error( 'insert_failed', esc_html__( 'Failed to create duplicate post.', 'post-duplicator' ) );
@@ -1086,6 +1098,39 @@ function get_users( $request ) {
   }
   
   return rest_ensure_response( $user_options );
+}
+
+/**
+ * Allow safe rgb()/hsl() values in inline styles during duplication.
+ *
+ * WordPress strips these because safecss_filter_attr() rejects parentheses
+ * that are not in its function list. Block editor highlights use
+ * background-color:rgba(0, 0, 0, 0) for a transparent mark, and removing it
+ * exposes the browser's default yellow background.
+ *
+ * Only numeric color functions are allowed. The rest of the declaration still
+ * has to pass WordPress's unsafe-character check.
+ *
+ * @param bool   $allow_css       Whether the CSS declaration is already allowed.
+ * @param string $css_test_string CSS declaration with supported functions already removed.
+ * @return bool
+ */
+function allow_safe_inline_color_css( $allow_css, $css_test_string ) {
+	if ( $allow_css || ! is_string( $css_test_string ) || '' === $css_test_string ) {
+		return $allow_css;
+	}
+
+	$stripped = preg_replace(
+		'/\b(?:rgba?|hsla?)\(\s*[0-9.%\s,\/+-]+\s*\)/',
+		'',
+		$css_test_string
+	);
+
+	if ( null === $stripped || $stripped === $css_test_string ) {
+		return $allow_css;
+	}
+
+	return 0 === preg_match( '%[\\\(&=}]|/\*%', $stripped );
 }
 
 /**

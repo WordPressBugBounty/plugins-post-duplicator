@@ -274,6 +274,21 @@ final class Settings {
   }
 
   /**
+   * Whether an option name was registered by a settings section.
+   *
+   * @param mixed $option Option name.
+   * @return bool
+   */
+  private function is_registered_option( $option ) {
+    if ( ! is_string( $option ) || '' === $option ) {
+      return false;
+    }
+
+    $options = self::$instance->options;
+    return is_array( $options ) && in_array( $option, $options, true );
+  }
+
+  /**
    * Return available options keys
    */
   public function get_options( $option = false ) {
@@ -1062,22 +1077,32 @@ final class Settings {
         return current_user_can('manage_options');
       },
       'callback' => function( $request ) {
-        $args = $request->get_params();
         $data = $request->get_json_params();
+        if ( ! is_array( $data ) ) {
+          $data = [];
+        }
 
-        $value_keys = isset( $data['valueKeys'] ) ? $data['valueKeys'] : [];
-        $values = isset( $data['values'] ) ? $data['values'] : [];
+        $value_keys = isset( $data['valueKeys'] ) && is_array( $data['valueKeys'] ) ? $data['valueKeys'] : [];
+        $values = isset( $data['values'] ) && is_array( $data['values'] ) ? $data['values'] : [];
 
-        if ( is_array( $value_keys ) && ! empty( $value_keys ) ) {
-          foreach ( $value_keys as $option => $keys ) {
-            $values_to_update = array_intersect_key( $values[$option], array_flip( $keys ) );
-            $updated_values = self::$instance->update_values( $option, $values_to_update );
-            $values[$option] = $updated_values;
+        foreach ( $value_keys as $option => $keys ) {
+          if ( ! self::$instance->is_registered_option( $option ) || ! is_array( $keys ) ) {
+            return new \WP_Error(
+              'mtphr_settings_invalid_option',
+              __( 'Invalid settings option.', 'post-duplicator' ),
+              array( 'status' => 400 )
+            );
           }
         }
-        
-        //self::$instance->update_values( $values );
-        return rest_ensure_response( $values , 200);
+
+        foreach ( $value_keys as $option => $keys ) {
+          $option_values = isset( $values[ $option ] ) && is_array( $values[ $option ] ) ? $values[ $option ] : [];
+          $setting_keys = array_values( array_filter( $keys, 'is_string' ) );
+          $values_to_update = array_intersect_key( $option_values, array_flip( $setting_keys ) );
+          $values[ $option ] = self::$instance->update_values( $option, $values_to_update );
+        }
+
+        return rest_ensure_response( $values );
       },
     ) );
   }
@@ -1124,6 +1149,11 @@ final class Settings {
    * Update the settings
    */
   public function update_values( $option, $values = [] ) {
+    // Never read or write an option this plugin did not register.
+    if ( ! $this->is_registered_option( $option ) ) {
+      return [];
+    }
+
     $settings          = self::$instance->get_settings( $option );
     $sanitize_settings = self::$instance->get_sanitize_settings( $option );
     $option_values     = self::$instance->get_option_values( $option );
