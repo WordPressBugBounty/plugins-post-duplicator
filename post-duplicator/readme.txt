@@ -4,7 +4,7 @@ Tags: posts, post, duplicate, duplication
 Requires at least: 6.6
 Requires PHP: 7.4
 Tested up to: 7.1.4
-Stable tag: 3.0.18
+Stable tag: 3.0.19
 License: GPL2
 
 Creates functionality to duplicate any and all post types, including taxonomies & custom fields. Perfect for developers and content creators.
@@ -313,6 +313,9 @@ Please report any security bugs found in the source code of this project through
 9. Advanced settings
 
 == Changelog ==
+
+= 3.0.19 [2026-11-16] =
+* Security fix: publishing a duplicate now requires the destination post type's publish capability, so an Author cannot publish a Page or custom type they are not allowed to publish. Props Neperio
 
 = 3.0.18 [2026-11-04] =
 * Fixed duplication removing safe inline color styles, including transparent highlight backgrounds. Props Vitalii

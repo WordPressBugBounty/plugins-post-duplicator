@@ -716,13 +716,6 @@ function perform_duplication( $orig, $settings ) {
 		}
 	}
 
-	// Restrict publish-gated statuses for users without publish capability
-	if ( ! current_user_can( 'publish_posts' ) ) {
-		if ( in_array( $duplicate['post_status'], array( 'publish', 'private', 'future' ), true ) ) {
-			$duplicate['post_status'] = 'pending';
-		}
-	}
-
 	// Set the type - validate against allowed post types
 	if ( $settings['type'] != 'same' ) {
 		$requested_type = sanitize_key( $settings['type'] );
@@ -731,6 +724,15 @@ function perform_duplication( $orig, $settings ) {
 		} else {
 			$duplicate['post_type'] = $orig->post_type;
 		}
+	}
+
+	// Publish, private, and future require the destination type's own publish
+	// capability. Authors have publish_posts but not publish_pages, so a generic
+	// publish_posts check would let them publish Pages and other types.
+	$destination_type = get_post_type_object( $duplicate['post_type'] );
+	$can_publish_destination = $destination_type && current_user_can( $destination_type->cap->publish_posts );
+	if ( ! $can_publish_destination && in_array( $duplicate['post_status'], array( 'publish', 'private', 'future' ), true ) ) {
+		$duplicate['post_status'] = 'pending';
 	}
 
 	// Set the parent - only when explicitly provided in settings
